@@ -78,6 +78,9 @@
                     </linecontainsregexp>
                     <tokenfilter>
                         <scriptfilter language="javascript">with (new JavaImporter(java.net, java.io)) {
+                            var echo = project.createTask("echo");
+
+                            try{
                             var outPath = '@{outPath}';
                             var metadataType = self.getToken();
                             var dir = outPath + '/' + metadataType;
@@ -99,6 +102,10 @@
                             bulkRetrieve.setBatchSize(batchSize);
                             bulkRetrieve.setUnzip(false);
                             bulkRetrieve.perform();
+                            }catch(err){
+                                echo.setMessage(err);
+                                echo.perform();
+                            }
                         }</scriptfilter>
                     </tokenfilter>
                 </filterchain>
