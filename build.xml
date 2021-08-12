@@ -1,0 +1,112 @@
+<project default="usage" xmlns:sf="antlib:com.salesforce" xmlns:if="ant:if" xmlns:unless="ant:unless">
+    
+    <taskdef uri="antlib:com.salesforce" classpath="ant-salesforce.jar" />
+    <property file="build.properties" />
+    <property environment="variables" />
+    <target name="usage">
+        <java classname="org.apache.tools.ant.Main">
+            <arg value="-projecthelp" />
+            <arg value="-quiet" />
+        </java>
+    </target>
+    
+    <target name="backup">
+        <backup username="${sf.username}" password="${sf.password}" serverurl="${sf.serverurl}" />
+    </target>
+    
+    <macrodef name="backup" description="Backup all metadata in an organization - Revision 11">
+        
+        <attribute name="username" default="${sf.username}" />
+        <attribute name="password" default="${sf.password}" />
+        <attribute name="serverurl" default="https://login.salesforce.com" />
+        <attribute name="outPath" default="backup" description="Directory to overwrite" />
+        
+        <sequential>
+            
+            <delete dir="@{outPath}" />
+            <mkdir dir="@{outPath}" />
+            
+            <local name="describeMetadataResult.tmp" />
+            <tempfile property="describeMetadataResult.tmp" prefix="describeMetadataResult" suffix=".tmp" createfile="true" deleteonexit="true" />
+            
+            <!-- cache to avoid repeat logins -->
+            <local name="trace.tmp" />
+            <tempfile property="trace.tmp" prefix="trace" suffix=".tmp" createfile="true" deleteonexit="true" />
+            <record name="${trace.tmp}" action="start" />
+            
+            <!-- determines org shape -->
+            <sf:describeMetadata
+                username="@{username}"
+                password="@{password}"
+                serverurl="@{serverurl}"
+                resultFilePath="${describeMetadataResult.tmp}"
+                trace="true"
+            />
+
+            <!-- parse endpoint and session -->
+            <record name="${trace.tmp}" action="stop" />
+            <local name="loginUrl" />
+            <loadfile property="loginUrl" srcFile="${trace.tmp}">
+                <filterchain><tokenfilter><filetokenizer/><replaceregex flags="gs" pattern=".*(https://[^/]+).*" replace="\1" /></tokenfilter></filterchain>
+            </loadfile>
+            <local name="sessionId" />
+            <loadfile property="sessionId" srcFile="${trace.tmp}">
+                <filterchain><tokenfilter><filetokenizer/><replaceregex flags="gs" pattern=".*&lt;sessionId&gt;([^&lt;]+)&lt;/sessionId&gt;.*" replace="\1" /></tokenfilter></filterchain>
+            </loadfile>
+
+            <local name="metadataTypes.tmp" />
+            <tempfile property="metadataTypes.tmp" prefix="metadataTypes" suffix=".tmp" createfile="true" deleteonexit="true" />
+    
+            <!-- clean metadata descriptions -->
+            <concat destFile="${metadataTypes.tmp}">
+                <fileset file="${describeMetadataResult.tmp}" />
+                <filterchain>
+                    <linecontainsregexp><regexp pattern="ChildObjects|XMLName" /></linecontainsregexp>
+                    <tokenfilter><replacestring from="," to="${line.separator}"/></tokenfilter>
+                    <tokenfilter><replacestring from="ChildObjects: " to=""/></tokenfilter>
+                    <tokenfilter><replacestring from="XMLName: " to=""/></tokenfilter>
+                    <tokenfilter><replacestring from="*" to=""/></tokenfilter>
+                    <tokenfilter><ignoreblank/></tokenfilter>
+                    <sortfilter/>
+                </filterchain>
+            </concat>
+            
+            <loadfile property="" srcFile="${metadataTypes.tmp}">
+                <filterchain>
+                    <linecontainsregexp negate="false">
+                        <regexp pattern="" />
+                    </linecontainsregexp>
+                    <tokenfilter>
+                        <scriptfilter language="javascript">with (new JavaImporter(java.net, java.io)) {
+                            var outPath = '@{outPath}';
+                            var metadataType = self.getToken();
+                            var dir = outPath + '/' + metadataType;
+                            var sessionId = project.getProperty('sessionId');
+                            var loginUrl = project.getProperty('loginUrl');
+                            var batchSize = metadataType == 'StaticResource' ? 10 : 10000;
+                            //adjusted for static resources to accommodate max request size
+                            
+                            var mkdir = project.createTask('mkdir');
+                            mkdir.setDir(new File(dir));
+                            mkdir.perform();
+                            
+                            //do NOT unzip the retrieved metadata otherwise they overwrite other batches
+                            var bulkRetrieve = project.createTask('antlib:com.salesforce:bulkRetrieve');
+                            bulkRetrieve.setServerURL(loginUrl);
+                            bulkRetrieve.setSessionId(sessionId);
+                            bulkRetrieve.setRetrieveTarget(new File(dir));
+                            bulkRetrieve.setMetadataType(metadataType);
+                            bulkRetrieve.setBatchSize(batchSize);
+                            bulkRetrieve.setUnzip(false);
+                            bulkRetrieve.perform();
+                        }</scriptfilter>
+                    </tokenfilter>
+                </filterchain>
+            </loadfile>
+            <input />
+            
+        </sequential>
+        
+    </macrodef>
+    
+</project>
